@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>會議紀錄產生器</title>
+<!-- 讀取 Word：Mammoth.js -->
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+<!-- 產生 Word：docx.js -->
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>
+<style>
+  :root {
+    --paper: #ffffff;
+    --bg: #eef1f0;
+    --ink: #1d2a2e;
+    --muted: #5d6b6f;
+    --line: #c9d2d0;
+    --seal: #2f5d62;
+    --error: #a3352b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 64px; }
+  header { margin-bottom: 28px; }
+  h1 {
+    font-family: "Noto Serif TC", "PMingLiU", "新細明體", serif;
+    font-size: 2rem; letter-spacing: .12em; margin: 0;
+  }
+  header p { margin: 4px 0 0; color: var(--muted); }
+
+  section {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--seal);
+    padding: 22px 24px;
+    margin-bottom: 20px;
+  }
+  h2 { font-size: 1.15rem; margin: 0 0 14px; color: var(--seal); }
+
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  input[type=file] { display: none; }
+  button, .file-btn {
+    font: inherit; font-size: .95rem;
+    padding: 8px 18px; border-radius: 3px; cursor: pointer;
+    border: 1px solid var(--seal); background: var(--paper); color: var(--seal);
+  }
+  button.primary { background: var(--seal); color: #fff; }
+  button:hover, .file-btn:hover { filter: brightness(.94); }
+  button:focus-visible, .file-btn:focus-within { outline: 3px solid #8fb3b6; outline-offset: 2px; }
+
+  .filename { color: var(--muted); font-size: .92rem; margin-top: 10px; }
+  textarea {
+    width: 100%; font: inherit; font-size: .95rem; line-height: 1.7;
+    border: 1px solid var(--line); padding: 12px; resize: vertical;
+    background: #fbfcfc; color: var(--ink);
+  }
+  textarea:focus { outline: 2px solid #8fb3b6; border-color: var(--seal); }
+  #transcript { height: 220px; }
+  #result { height: 320px; }
+  .hint { color: var(--muted); font-size: .92rem; margin: 10px 0 0; }
+  .status { font-weight: 600; color: var(--seal); margin: 0 0 8px; }
+  .msg { min-height: 1.5em; margin: 10px 0 0; font-size: .95rem; }
+  .msg.err { color: var(--error); }
+  .msg.ok { color: var(--seal); }
+  .spacer { height: 12px; }
+
+  .fields { display: grid; grid-template-columns: 7em 1fr; gap: 10px 12px; align-items: center; }
+  .fields label { color: var(--ink); font-size: .95rem; }
+  .fields input[type=text] {
+    font: inherit; font-size: .95rem; padding: 7px 10px; width: 100%;
+    border: 1px solid var(--line); background: #fbfcfc; color: var(--ink);
+  }
+  .fields input[type=text]:focus { outline: 2px solid #8fb3b6; border-color: var(--seal); }
+  .fields .top { align-self: start; padding-top: 8px; }
+  .dt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: .95rem; }
+  .fields .dt input[type=text] { width: 3.6em; text-align: center; padding: 7px 4px; }
+  .fields .dt input.wd { width: 2.6em; }
+  #attendees { height: 110px; }
+  .fields .note { grid-column: 2; color: var(--muted); font-size: .85rem; margin-top: -4px; }
+  @media (max-width: 520px) {
+    .fields { grid-template-columns: 1fr; }
+    .fields .top { padding-top: 0; }
+    .fields .note { grid-column: 1; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>會議紀錄產生器</h1>
+    <p>將會議逐字稿整理成簡單扼要的會議紀錄</p>
+  </header>
+
+  <section>
+    <h2>① 上傳逐字稿</h2>
+    <div class="row">
+      <label class="file-btn">選擇 Word 檔案
+        <input type="file" id="file" accept=".docx">
+      </label>
+      <button class="primary" id="readBtn">讀取 Word</button>
+    </div>
+    <div class="filename" id="filename">檔案名稱：尚未選擇</div>
+    <p class="msg" id="msg1"></p>
+  </section>
+
+  <section>
+    <h2>② 複製給 Claude</h2>
+    <p class="status" id="status" hidden>已讀取逐字稿</p>
+    <textarea id="transcript" readonly placeholder="讀取 Word 後，逐字稿會顯示在這裡"></textarea>
+    <div class="spacer"></div>
+    <div class="row">
+      <button class="primary" id="copyBtn">複製 Prompt</button>
+    </div>
+    <p class="hint">請將上方 Prompt 貼到 Claude，等待 Claude 整理完成。</p>
+    <p class="msg" id="msg2"></p>
+  </section>
+
+  <section>
+    <h2>③ 填寫會議資料並貼上 Claude 結果</h2>
+    <div class="fields">
+      <label for="s-y">開會時間</label>
+      <div class="dt">
+        <input type="text" id="s-y" inputmode="numeric" aria-label="開會年">年
+        <input type="text" id="s-m" inputmode="numeric" aria-label="開會月">月
+        <input type="text" id="s-d" inputmode="numeric" aria-label="開會日">日(星期
+        <input type="text" id="s-w" class="wd" aria-label="開會星期">)
+        <input type="text" id="s-h" inputmode="numeric" aria-label="開會時">時
+      </div>
+      <label for="f-place">開會地點</label>
+      <input type="text" id="f-place" value="線上會議">
+      <label for="f-chair">主持人</label>
+      <input type="text" id="f-chair">
+      <label for="f-recorder">記錄</label>
+      <input type="text" id="f-recorder">
+      <label for="attendees" class="top">出席者</label>
+      <textarea id="attendees">A公司：
+B公司：</textarea>
+      <span class="note">一行一個單位，格式「單位：姓名」，Word 會自動編號為一、二、三…</span>
+      <label for="e-y">散會時間</label>
+      <div class="dt">
+        <input type="text" id="e-y" inputmode="numeric" aria-label="散會年">年
+        <input type="text" id="e-m" inputmode="numeric" aria-label="散會月">月
+        <input type="text" id="e-d" inputmode="numeric" aria-label="散會日">日(星期
+        <input type="text" id="e-w" class="wd" aria-label="散會星期">)
+        <input type="text" id="e-h" inputmode="numeric" aria-label="散會時">時
+        <input type="text" id="e-min" inputmode="numeric" aria-label="散會分">分
+      </div>
+      <span class="note">填好年月日後，星期會自動帶入（可自行修改）。</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <textarea id="result" placeholder="請將 Claude 整理好的會議紀錄貼在這裡"></textarea>
+    <div class="spacer"></div>
+    <div class="row">
+      <button class="primary" id="genBtn">產生 Word</button>
+      <button id="clearBtn">清除</button>
+    </div>
+    <p class="msg" id="msg3"></p>
+  </section>
+</main>
+
+<script>
+// ===== Prompt 範本（逐字稿放在最後）=====
+const PROMPT_TEMPLATE = `你是一名專業的會議紀錄整理人員。
+
+請將以下會議逐字稿整理成「簡單、扼要、正式」的會議紀錄。
+
+會議紀錄只需要三個部分：
+一、報告事項
+二、討論事項
+三、決議事項
+
+【整理規則】
+
+1. 報告事項
+整理會議中的工作報告、業務報告、進度報告、工作說明、業務說明、各單位報告。
+直接用數字列點。例如：
+一、報告事項
+1. 各單位報告本月工作執行情形。
+2. 資訊單位報告系統建置進度。
+3. 業務單位報告近期工作情形。
+
+2. 討論事項
+整理會議中實際討論的事項。只保留重要內容，不要逐一記錄每個人的發言，相同議題要合併。
+直接用數字列點。例如：
+二、討論事項
+1. 有關新系統上線時程，與會人員進行討論。
+2. 有關年度預算執行進度，請各單位確認。
+3. 有關人力配置問題，與會人員進行討論。
+
+3. 決議事項
+只有在會議中「確實形成決定」時才可以列入。
+例如出現：決定、決議、同意、確認、通過、核定，才可以列為決議事項。例如：
+三、決議事項
+1. 新系統於12月1日正式上線。
+2. 請各單位於11月15日前完成資料確認。
+
+4. 沒有決議時
+如果會議沒有明確形成決議，完全不要輸出「三、決議事項」。
+只輸出「一、報告事項」與「二、討論事項」，到這裡就結束。
+
+5. 不可以把討論當成決議
+以下內容不能自行判斷為決議：
+建議、提議、希望、考慮、研議、再研究、再確認、再討論、可能、或許、尚待確認、尚未決定、有待討論。
+例如「建議下個月開始導入系統。」不能寫成決議事項，應該放在「二、討論事項」。
+
+6. 無法判斷時
+如果無法確定某件事情是否已經形成決議，不要列為決議，放到「二、討論事項」。
+
+7. 語言
+將口語轉換成正式書面語。
+刪除沒有意義的：嗯、啊、呃、那個、就是、然後、這個、我覺得。
+刪除重複內容。不要逐字記錄，不要寫成文章，不要寫長篇摘要。
+
+8. 不要捏造
+只能根據逐字稿整理。
+不得自行增加人名、單位、日期、金額、數字、決議、工作期限。
+如果逐字稿沒有提到，就不要自行補充。
+
+9. 重要資訊要保留
+如果逐字稿有日期、時間、人名、單位、金額、數量、工作期限、執行期限，請保留。
+
+10. 子項目
+如果一個事項下面有多個相關的小項目，才使用：
+1. XXXXX
+(1) XXXXX
+(2) XXXXX
+(3) XXXXX
+不要為了格式強制增加子項目。
+
+【輸出格式】
+最後只需要輸出（純文字，不要使用 Markdown 符號，例如 #、**、-）：
+
+一、報告事項
+1. XXXXX
+2. XXXXX
+
+二、討論事項
+1. XXXXX
+2. XXXXX
+
+三、決議事項
+1. XXXXX
+2. XXXXX
+
+如果沒有決議，就不要輸出「三、決議事項」。
+
+【不要增加其他分類】
+絕對不要增加：會議摘要、會議重點、討論重點、主要意見、背景說明、問題分析、後續處理、待辦事項、建議事項、結論、AI 分析、備註。
+只要「報告事項」「討論事項」「決議事項」。
+除了會議紀錄本身，不要輸出任何開場白或說明文字。
+
+【會議紀錄要簡單】
+這不是逐字稿，也不是詳細會議分析。請用「正式、簡潔、扼要」的方式整理。
+例如原文：
+「因為我們現在這個系統其實已經測試一段時間了，目前大概有三十幾個人測試過，大家反應其實都還不錯，所以我們是不是可以考慮在下個月開始正式使用，但是還是要請資訊組確認一下權限的問題。」
+應整理成：
+二、討論事項
+1. 新系統已完成測試，與會人員討論下月正式導入之可行性。
+2. 資訊組需確認系統使用權限。
+注意：以上內容沒有明確「決定下個月正式使用」，所以不能自行列入決議事項。
+
+【Word 逐字稿內容】
+以下是本次會議逐字稿：
+
+{{TRANSCRIPT}}`;
+
+// ===== 元件 =====
+const $ = id => document.getElementById(id);
+const fileInput = $('file');
+let transcriptText = '';
+
+function show(el, text, type) {
+  el.textContent = text;
+  el.className = 'msg' + (type ? ' ' + type : '');
+}
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  $('filename').textContent = '檔案名稱：' + (f ? f.name : '尚未選擇');
+  show($('msg1'), '');
+});
+
+// ===== Step 1：讀取 Word =====
+$('readBtn').addEventListener('click', async () => {
+  const msg = $('msg1');
+  const f = fileInput.files[0];
+  if (!f) return show(msg, '請先選擇 Word 檔案。', 'err');
+  if (!f.name.toLowerCase().endsWith('.docx')) return show(msg, '目前只支援 .docx Word 檔案。', 'err');
+  try {
+    const buf = await f.arrayBuffer();
+    const r = await mammoth.extractRawText({ arrayBuffer: buf });
+    transcriptText = r.value.replace(/\n{3,}/g, '\n\n').trim();
+    if (!transcriptText) throw new Error('empty');
+    $('transcript').value = transcriptText;
+    $('status').hidden = false;
+    show(msg, '已讀取逐字稿', 'ok');
+  } catch (e) {
+    transcriptText = '';
+    $('transcript').value = '';
+    $('status').hidden = true;
+    show(msg, '無法讀取此 Word 檔案，請確認檔案是否正常。', 'err');
+  }
+});
+
+// ===== Step 2：複製 Prompt =====
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    // 備用方式（部分瀏覽器以本機檔案開啟時使用）
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  }
+}
+
+$('copyBtn').addEventListener('click', async () => {
+  const msg = $('msg2');
+  if (!transcriptText) return show(msg, '請先選擇 Word 檔案。', 'err');
+  const prompt = PROMPT_TEMPLATE.replace('{{TRANSCRIPT}}', transcriptText);
+  const ok = await copyText(prompt);
+  show(msg, ok ? '已複製 Prompt，請貼到 Claude。' : '複製失敗，請改用其他瀏覽器（建議 Chrome 或 Edge）。', ok ? 'ok' : 'err');
+});
+
+// ===== Step 3：產生 Word =====
+function cleanLine(s) {
+  return s
+    .replace(/\*\*/g, '')
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/^[-*•]\s+/, '')
+    .trim();
+}
+
+// 字寬：14 號字 = 280 twips
+const CH = 280;
+const CN_NUM = ['一','二','三','四','五','六','七','八','九','十','十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
+
+function para(text, opts = {}) {
+  const { Paragraph, TextRun } = docx;
+  return new Paragraph({
+    children: [new TextRun({ text, bold: !!opts.bold })],
+    indent: opts.indent,
+    spacing: opts.spacing || { after: 60 },
+    tabStops: opts.tabStops,
+  });
+}
+
+// 空白欄位在 Word 中保留填寫空間
+const blank = s => s ? s : '　　';
+const fv = id => $(id).value.trim();
+
+function startTimeText() {
+  return blank(fv('s-y')) + '年' + blank(fv('s-m')) + '月' + blank(fv('s-d')) + '日(星期' +
+    (fv('s-w') || '　') + ') ' + blank(fv('s-h')) + '時';
+}
+function endTimeText() {
+  return blank(fv('e-y')) + '年' + blank(fv('e-m')) + '月' + blank(fv('e-d')) + '日(星期' +
+    (fv('e-w') || '　') + ') ' + blank(fv('e-h')) + '時' + blank(fv('e-min')) + '分';
+}
+
+// 輸入民國年月日後自動帶入星期
+function autoWeekday(prefix) {
+  const y = parseInt(fv(prefix + '-y'), 10), m = parseInt(fv(prefix + '-m'), 10), d = parseInt(fv(prefix + '-d'), 10);
+  if (!y || !m || !d) return;
+  const date = new Date(y + 1911, m - 1, d);
+  if (date.getMonth() !== m - 1) return;
+  $(prefix + '-w').value = '日一二三四五六'[date.getDay()];
+}
+['s', 'e'].forEach(p => ['y', 'm', 'd'].forEach(k =>
+  $(p + '-' + k).addEventListener('input', () => autoWeekday(p))));
+
+// 固定欄位（壹～伍）
+function buildHeader() {
+  const { Paragraph, TextRun, TabStopType, Tab } = docx;
+  const v = id => $(id).value.trim();
+  const top = { left: CH * 2, hanging: CH * 2 };
+  const out = [];
+  out.push(para('壹、開會時間：' + startTimeText(), { indent: top }));
+  out.push(para('貳、開會地點：' + v('f-place'), { indent: top }));
+  out.push(new Paragraph({
+    children: [
+      new TextRun('參、主持人：' + v('f-chair')),
+      new TextRun({ children: [new Tab(), '記錄：' + v('f-recorder')] }),
+    ],
+    tabStops: [{ type: TabStopType.LEFT, position: CH * 18 }],
+    indent: top,
+    spacing: { after: 60 },
+  }));
+  out.push(para('肆、出席者：', { indent: top }));
+  const lines = $('attendees').value.split(/\r?\n/)
+    .map(s => s.trim().replace(/^[一二三四五六七八九十]+、\s*/, ''))
+    .filter(Boolean);
+  lines.forEach((line, i) => {
+    out.push(para((CN_NUM[i] || (i + 1)) + '、' + line, { indent: { left: CH * 4, hanging: CH * 2 } }));
+  });
+  out.push(para('伍、報告、討論及決議事項：', { indent: top }));
+  return out;
+}
+
+// Claude 結果（接在「伍」之下，整體再縮排一層）
+function buildParagraphs(text) {
+  const out = [];
+  const lines = text.split(/\r?\n/).map(cleanLine).filter(Boolean);
+  for (const line of lines) {
+    if (/^[一二三四五六七八九十]+、/.test(line)) {
+      // 一、報告事項
+      out.push(para(line, { bold: true, indent: { left: CH * 4, hanging: CH * 2 }, spacing: { before: 160, after: 60 } }));
+    } else if (/^[（(]\d+[)）]/.test(line)) {
+      // (1) 子項目
+      out.push(para(line, { indent: { left: CH * 7.5, hanging: CH * 2 }, spacing: { after: 40 } }));
+    } else if (/^\d+[.．、]/.test(line)) {
+      // 1. 列點
+      out.push(para(line, { indent: { left: CH * 5.5, hanging: CH * 1.5 } }));
+    } else {
+      out.push(para(line, { indent: { left: CH * 5.5 } }));
+    }
+  }
+  return out;
+}
+
+$('genBtn').addEventListener('click', async () => {
+  const msg = $('msg3');
+  const text = $('result').value.trim();
+  if (!text) return show(msg, '請先貼上 Claude 整理好的會議紀錄。', 'err');
+  try {
+    const { Document, Packer, Paragraph, TextRun, AlignmentType } = docx;
+    const doc = new Document({
+      styles: {
+        default: {
+          document: {
+            run: { font: { ascii: 'Times New Roman', hAnsi: 'Times New Roman', eastAsia: '標楷體' }, size: 28 },
+            paragraph: { spacing: { line: 360 } },
+          },
+        },
+      },
+      sections: [{
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 240 },
+            children: [new TextRun({ text: '會議紀錄', bold: true, size: 36 })],
+          }),
+          ...buildHeader(),
+          ...buildParagraphs(text),
+          para('陸、散會：' + endTimeText(), { indent: { left: CH * 2, hanging: CH * 2 }, spacing: { before: 160, after: 60 } }),
+        ],
+      }],
+    });
+    const blob = await Packer.toBlob(doc);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '會議紀錄.docx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    show(msg, '已產生「會議紀錄.docx」。', 'ok');
+  } catch (e) {
+    show(msg, '產生 Word 時發生錯誤，請重新整理網頁後再試一次。', 'err');
+  }
+});
+
+// ===== 清除 =====
+$('clearBtn').addEventListener('click', () => {
+  fileInput.value = '';
+  transcriptText = '';
+  $('filename').textContent = '檔案名稱：尚未選擇';
+  $('transcript').value = '';
+  $('result').value = '';
+  ['s-y','s-m','s-d','s-w','s-h','e-y','e-m','e-d','e-w','e-h','e-min'].forEach(id => $(id).value = '');
+  $('f-place').value = '線上會議';
+  $('f-chair').value = '';
+  $('f-recorder').value = '';
+  $('attendees').value = 'A公司：\nB公司：';
+  $('status').hidden = true;
+  ['msg1', 'msg2', 'msg3'].forEach(id => show($(id), ''));
+});
+</script>
+</body>
+</html>
